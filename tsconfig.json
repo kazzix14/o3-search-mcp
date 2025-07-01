@@ -29,5 +29,9 @@
     "checkJs": false
   },
   "include": ["index.ts"],
-  "exclude": ["node_modules", "build", "**/*.test.ts", "**/*.spec.ts"]
+  "exclude": ["node_modules", "build", "**/*.test.ts", "**/*.spec.ts"],
+  "ts-node": {
+    "esm": true,
+    "experimentalSpecifierResolution": "node"
+  }
 }

@@ -7,33 +7,61 @@ import { z } from "zod";
 // Create server instance
 const server = new McpServer({
   name: "o3-search-mcp",
-  version: "0.0.1",
+  version: "0.0.3",
 });
 
 // Initialize OpenAI client
+if (!process.env.OPENAI_API_KEY) {
+  console.error("Error: OPENAI_API_KEY environment variable is required");
+  process.exit(1);
+}
+
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
 // Configuration from environment variables
-const searchContextSize = (process.env.SEARCH_CONTEXT_SIZE || 'medium') as 'low' | 'medium' | 'high';
-const reasoningEffort = (process.env.REASONING_EFFORT || 'medium') as 'low' | 'medium' | 'high';
+const validSearchContextSizes = ["low", "medium", "high"] as const;
+const validReasoningEfforts = ["low", "medium", "high"] as const;
+
+const searchContextSize = validSearchContextSizes.includes(
+  process.env.SEARCH_CONTEXT_SIZE as any
+)
+  ? (process.env.SEARCH_CONTEXT_SIZE as "low" | "medium" | "high")
+  : "medium";
+
+const reasoningEffort = validReasoningEfforts.includes(
+  process.env.REASONING_EFFORT as any
+)
+  ? (process.env.REASONING_EFFORT as "low" | "medium" | "high")
+  : "medium";
 
 // Define the o3-search tool
 server.tool(
-  "o3-search",
-  `An AI agent with advanced web search capabilities. Useful for finding latest information and troubleshooting errors. Supports natural language queries.`,
-  { input: z.string().describe('Ask questions, search for information, or consult about complex problems in English.'), },
+  "ask-gpt-o3-extremely-smart",
+  `An extremely smart reasoning AI with advanced web search capabilities (GPT-o3). Useful for finding latest information and troubleshooting errors. complex problems. like typing errors. or mathmetical problems. or something like that.`,
+  {
+    input: z
+      .string()
+      .describe(
+        "Ask questions, search for information, or consult about complex problems. like typing errors. or mathmetical problems. or something like that. your input will be prompt for smart LLM. so describe your problem in detail."
+      ),
+  },
   async ({ input }) => {
     try {
       const response = await openai.responses.create({
-        model: 'o3',
+        model: "o3",
         input,
-        tools: [{ type: 'web_search_preview', search_context_size: searchContextSize }],
-        tool_choice: 'auto',
+        tools: [
+          {
+            type: "web_search_preview",
+            search_context_size: searchContextSize,
+          },
+        ],
+        tool_choice: "auto",
         parallel_tool_calls: true,
         reasoning: { effort: reasoningEffort },
-      })
+      });
 
       return {
         content: [
@@ -49,7 +77,9 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `Error: ${error instanceof Error ? error.message : "Unknown error occurred"}`,
+            text: `Error: ${
+              error instanceof Error ? error.message : "Unknown error occurred"
+            }`,
           },
         ],
       };
@@ -60,7 +90,6 @@ server.tool(
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.log("MCP Server running on stdio");
 }
 
 main().catch((error) => {
