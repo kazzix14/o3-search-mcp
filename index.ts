@@ -3,11 +3,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import OpenAI from "openai";
 import { z } from "zod";
+import { readFile } from "fs/promises";
+import path from "path";
 
 // Create server instance
 const server = new McpServer({
   name: "o3-search-mcp",
-  version: "0.0.3",
+  version: "0.0.4",
 });
 
 // Initialize OpenAI client
@@ -39,25 +41,75 @@ const reasoningEffort = validReasoningEfforts.includes(
 // Define the o3-search tool
 server.tool(
   "ask-gpt-o3-extremely-smart",
-  `An extremely smart reasoning AI with advanced web search capabilities (GPT-o3). Useful for finding latest information and troubleshooting errors. complex problems. like typing errors. or mathmetical problems. or something like that.`,
+  `An extremely smart reasoning AI with advanced web search capabilities (GPT-o3). Useful for finding latest information and troubleshooting errors, complex problems, typing errors, mathematical problems, and code analysis. 
+
+Key features:
+- Advanced reasoning with OpenAI's o3 model
+- Web search capabilities for up-to-date information
+- File content analysis - specify file paths to have their contents automatically read and analyzed
+- Perfect for code review, debugging, documentation analysis, and technical problem solving
+
+Usage: Provide your question/problem in 'input' and optionally specify file paths in 'file_paths' for detailed file analysis.`,
   {
     input: z
       .string()
       .describe(
-        "Ask questions, search for information, or consult about complex problems. like typing errors. or mathmetical problems. or something like that. your input will be prompt for smart LLM. so describe your problem in detail."
+        "Your question, problem, or request for the AI. Be specific and detailed. Examples: 'Analyze this code for bugs', 'Explain how this algorithm works', 'Help me fix this error', 'What's the latest information about X?'"
+      ),
+    file_paths: z
+      .array(z.string())
+      .optional()
+      .describe(
+        "Optional array of absolute file paths to analyze. The server will automatically read these files and include their contents in the analysis. Supports any text-based files (code, config, docs, etc.). Example: ['/path/to/file1.ts', '/path/to/file2.py', '/path/to/config.json']"
       ),
   },
-  async ({ input }) => {
-    const prompt = `
+  async ({ input, file_paths }) => {
+    // Read file contents if file_paths are provided
+    let fileContents = '';
+    if (file_paths && file_paths.length > 0) {
+      for (const filePath of file_paths) {
+        try {
+          const content = await readFile(filePath, 'utf-8');
+          fileContents += `
+## File: ${filePath}
+\`\`\`
+${content}
+\`\`\`
+
+`;
+        } catch (error) {
+          fileContents += `
+## File: ${filePath}
+Error reading file: ${error instanceof Error ? error.message : 'Unknown error'}
+
+`;
+        }
+      }
+    }
+
+    const fullInput = `${input}
+
+${fileContents ? `
+
+## Provided Files
+The following files have been read and their contents are included below for analysis:
+
+${fileContents}
+
+Please analyze these files in the context of the question/request above.` : ''}`;
+
+    const systemPrompt = `
     あなたは他のAIから相談を受けています。相談に対して、できる限り嘘をつかず、正確に答えてください。
     また、情報が足りない場合はその旨を伝え、現状の情報と追加して別の情報を提供するようにしてください。
     例えばソースコードがさらに欲しい場合は、相手のAIにその旨を伝え、今渡されてる情報と合わせてさらに情報を求めてください。
     相手は、情報へのアクセス手段を持っています。
+    
+    提供されたファイルがある場合は、その内容を詳しく分析し、具体的で実用的な回答を提供してください。
     `;
     try {
       const response = await openai.responses.create({
         model: "o3",
-        input,
+        input: fullInput,
         tools: [
           {
             type: "web_search_preview",

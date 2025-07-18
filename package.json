@@ -1,6 +1,6 @@
 {
   "name": "o3-search-mcp",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "main": "build/index.js",
   "bin": {
     "o3-search-mcp": "./build/index.js"
