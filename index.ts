@@ -60,7 +60,7 @@ Usage: Provide your question/problem in 'input' and optionally specify file path
       .array(z.string())
       .optional()
       .describe(
-        "Optional array of absolute file paths to analyze. The server will automatically read these files and include their contents in the analysis. Supports any text-based files (code, config, docs, etc.). Example: ['/path/to/file1.ts', '/path/to/file2.py', '/path/to/config.json']"
+        "Optional array of ABSOLUTE file paths to analyze. MUST use absolute paths (starting with / on Unix or C:\\ on Windows). Relative paths are NOT supported. The server will automatically read these files and include their contents in the analysis. Supports any text-based files (code, config, docs, etc.). Example: ['/Users/name/project/file1.ts', '/home/user/code/file2.py', 'C:\\\\projects\\\\config.json']"
       ),
   },
   async ({ input, file_paths }) => {
