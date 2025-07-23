@@ -10,7 +10,7 @@ import { ConversationStore } from "./conversationStore.js";
 // Create server instance
 const server = new McpServer({
   name: "o3-search-mcp",
-  version: "0.0.5",
+  version: "0.0.6",
 });
 
 // Initialize OpenAI client

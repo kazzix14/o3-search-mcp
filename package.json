@@ -1,6 +1,6 @@
 {
   "name": "o3-search-mcp",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "main": "build/index.js",
   "bin": {
     "o3-search-mcp": "./build/index.js"
@@ -33,7 +33,7 @@
     "start": "node --loader ts-node/esm index.ts",
     "dev": "node --loader ts-node/esm --watch index.ts",
     "build": "tsc && chmod +x build/index.js",
-    "prepublishOnly": "pnpm run build"
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.13.2",
