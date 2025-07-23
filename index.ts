@@ -11,7 +11,7 @@ async function setupServer() {
   // Create server instance
   const server = new McpServer({
     name: "o3-search-mcp",
-    version: "0.0.7",
+    version: "0.0.8",
   });
 
   // Initialize OpenAI client
@@ -30,8 +30,8 @@ async function setupServer() {
   // Wait for conversation store to initialize
   await new Promise(resolve => setTimeout(resolve, 100));
 
-  // Default conversation ID for this server session
-  const defaultConversationId = "default_conversation";
+  // Generate unique default conversation ID for this server session
+  const defaultConversationId = `default_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
   // Configuration from environment variables
   const validSearchContextSizes = ["low", "medium", "high"] as const;
