@@ -418,6 +418,7 @@ ${fileContents}` : ''}`;
       let currentInput = fullInput;
       let depth = 0;
       const maxDepth = 10;
+      let lastResponseId: string | undefined; // Store previous response ID for conversation continuity
 
       while (depth < maxDepth) {
         depth++;
@@ -430,6 +431,7 @@ ${fileContents}` : ''}`;
           tool_choice: "auto",
           parallel_tool_calls: true,
           reasoning: { effort: reasoningEffort },
+          ...(lastResponseId && { previous_response_id: lastResponseId }), // Include previous response context
         });
 
         // Check for function calls
@@ -524,6 +526,9 @@ ${fileContents}` : ''}`;
             break;
           }
         }
+
+        // Store response ID for next iteration to maintain conversation context
+        lastResponseId = response.id;
 
         // Add tool results and continue loop
         allToolResults.push(...currentToolResults);

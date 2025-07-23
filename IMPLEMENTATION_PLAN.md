@@ -65,10 +65,33 @@ ${allToolResults.join('\n\n')}
 - n段階ループの基本実装
 - tool_choice: "auto" への変更
 - 完了判定ロジックの修正（テキスト出力の存在確認）
+- previous_response_idを使った会話継続性の改善（thinking tokenとassistantメッセージを自動引き継ぎ）
 
 🔄 **次のステップ**
 - テスト実行（様々なシナリオで動作確認）
 - 必要に応じて安全制限の追加検討
+
+### 改善点の実装
+
+**previous_response_id による会話継続性の改善**
+```typescript
+let lastResponseId: string | undefined;
+
+while (depth < maxDepth) {
+  const response = await openai.responses.create({
+    // ... 他のパラメータ ...
+    ...(lastResponseId && { previous_response_id: lastResponseId }),
+  });
+  
+  // レスポンスIDを保存
+  lastResponseId = response.id;
+}
+```
+
+これにより：
+- thinking token（推論過程）が自動的に次のループに引き継がれる
+- 前段のassistantメッセージも保持される
+- トークンの重複が減り、コスト効率が向上
 
 ## 期待される効果
 
