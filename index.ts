@@ -7,47 +7,51 @@ import { readFile } from "fs/promises";
 import path from "path";
 import { ConversationStore } from "./conversationStore.js";
 
-// Create server instance
-const server = new McpServer({
-  name: "o3-search-mcp",
-  version: "0.0.6",
-});
+async function setupServer() {
+  // Create server instance
+  const server = new McpServer({
+    name: "o3-search-mcp",
+    version: "0.0.7",
+  });
 
-// Initialize OpenAI client
-if (!process.env.OPENAI_API_KEY) {
-  console.error("Error: OPENAI_API_KEY environment variable is required");
-  process.exit(1);
-}
+  // Initialize OpenAI client
+  if (!process.env.OPENAI_API_KEY) {
+    console.error("Error: OPENAI_API_KEY environment variable is required");
+    process.exit(1);
+  }
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+  const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+  });
 
-// Initialize conversation store
-const conversationStore = new ConversationStore();
+  // Initialize conversation store
+  const conversationStore = new ConversationStore();
 
-// Default conversation ID for this server session
-const defaultConversationId = "default_conversation";
+  // Wait for conversation store to initialize
+  await new Promise(resolve => setTimeout(resolve, 100));
 
-// Configuration from environment variables
-const validSearchContextSizes = ["low", "medium", "high"] as const;
-const validReasoningEfforts = ["low", "medium", "high"] as const;
+  // Default conversation ID for this server session
+  const defaultConversationId = "default_conversation";
 
-const searchContextSize = validSearchContextSizes.includes(
-  process.env.SEARCH_CONTEXT_SIZE as any
-)
-  ? (process.env.SEARCH_CONTEXT_SIZE as "low" | "medium" | "high")
-  : "medium";
+  // Configuration from environment variables
+  const validSearchContextSizes = ["low", "medium", "high"] as const;
+  const validReasoningEfforts = ["low", "medium", "high"] as const;
 
-const reasoningEffort = validReasoningEfforts.includes(
-  process.env.REASONING_EFFORT as any
-)
-  ? (process.env.REASONING_EFFORT as "low" | "medium" | "high")
-  : "medium";
+  const searchContextSize = validSearchContextSizes.includes(
+    process.env.SEARCH_CONTEXT_SIZE as any
+  )
+    ? (process.env.SEARCH_CONTEXT_SIZE as "low" | "medium" | "high")
+    : "medium";
 
-// Define the o3-search tool
-server.tool(
-  "ask-gpt-o3-extremely-smart",
+  const reasoningEffort = validReasoningEfforts.includes(
+    process.env.REASONING_EFFORT as any
+  )
+    ? (process.env.REASONING_EFFORT as "low" | "medium" | "high")
+    : "medium";
+
+  // Define the o3-search tool
+  server.tool(
+    "ask-gpt-o3-extremely-smart",
   `Advanced reasoning AI powered by OpenAI's o3 model with web search and persistent conversation memory.
 
 Key features:
@@ -154,7 +158,7 @@ Please analyze these files in the context of the question/request above.` : ''}`
       const responseText = response.output_text || "No response text available.";
       
       // Save conversation
-      conversationStore.createOrUpdateConversation(
+      await conversationStore.createOrUpdateConversation(
         convId,
         input,
         responseText,
@@ -187,11 +191,11 @@ Please analyze these files in the context of the question/request above.` : ''}`
       };
     }
   }
-);
+  );
 
-// Define the reset-conversation tool
-server.tool(
-  "reset-conversation",
+  // Define the reset-conversation tool
+  server.tool(
+    "reset-conversation",
   `Clear conversation history to start fresh. Useful when switching topics or avoiding context confusion.
 
 Use cases:
@@ -213,7 +217,7 @@ Default behavior:
   },
   async ({ conversation_id }) => {
     const convId = conversation_id || defaultConversationId;
-    conversationStore.resetConversation(convId);
+    await conversationStore.resetConversation(convId);
     
     return {
       content: [
@@ -224,9 +228,13 @@ Default behavior:
       ],
     };
   }
-);
+  );
+
+  return server;
+}
 
 async function main() {
+  const server = await setupServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
