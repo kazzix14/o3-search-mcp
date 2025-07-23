@@ -437,7 +437,7 @@ Error reading file: ${error instanceof Error ? error.message : 'Unknown error'}
       let responseText = "";
       let allToolResults: string[] = [];
       let depth = 0;
-      const maxDepth = 10;
+      const maxDepth = 30; // Maximum iterations for complex tasks
       let lastResponseId: string | undefined; // Store previous response ID for conversation continuity
 
       while (depth < maxDepth) {
