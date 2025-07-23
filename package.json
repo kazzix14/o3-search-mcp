@@ -1,6 +1,6 @@
 {
   "name": "o3-search-mcp",
-  "version": "0.0.8",
+  "version": "0.1.0",
   "main": "build/index.js",
   "bin": {
     "o3-search-mcp": "./build/index.js"
@@ -36,7 +36,8 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.13.2",
+    "@anthropic-ai/claude-code": "^1.0.58",
+    "@modelcontextprotocol/sdk": "^1.16.0",
     "minimist": "^1.2.8",
     "openai": "^5.8.1",
     "zod": "^3.25.67"
