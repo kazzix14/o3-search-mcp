@@ -2,6 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import OpenAI from "openai";
+import type { ResponseInputItem } from "openai/resources/responses/responses.js";
 import { z } from "zod";
 import { readFile } from "fs/promises";
 import path from "path";
@@ -273,17 +274,37 @@ Error reading file: ${error instanceof Error ? error.message : 'Unknown error'}
 
     const systemPrompt = `他のAIからの相談に正確に答えてください。必要に応じてツールを使用し、その結果を踏まえて簡潔で実用的な回答を日本語で提供してください。${diffAnalysis ? 'Git差分が提供されている場合は、問題の原因特定と解決策を優先してください。' : ''}`;
 
-    const fullInput = `${systemPrompt}
+    // Prepare structured input items instead of string concatenation
+    const inputItems: ResponseInputItem[] = [
+      {
+        type: "message",
+        role: "user",
+        content: [
+          { type: "input_text", text: `${conversationContext}${input}` }
+        ]
+      }
+    ];
 
-${conversationContext}${input}
+    // Add diff analysis as a system message if present
+    if (diffAnalysis) {
+      inputItems.push({
+        type: "message",
+        role: "system",
+        content: [{ type: "input_text", text: diffAnalysis }]
+      });
+    }
 
-${diffAnalysis}${fileContents ? `
-
-## Files:
-${fileContents}` : ''}`;
+    // Add file contents as a system message if present
+    if (fileContents) {
+      inputItems.push({
+        type: "message",
+        role: "system",
+        content: [{ type: "input_text", text: `## Files:\n${fileContents}` }]
+      });
+    }
       
       process.stderr.write(`[DEBUG] About to call OpenAI API with model: o3\n`);
-      process.stderr.write(`[DEBUG] Input length: ${fullInput.length}\n`);
+      process.stderr.write(`[DEBUG] Input items count: ${inputItems.length}\n`);
       
       // Define tools for o3 - separate web search and function tools for better type safety
       const tools: any[] = [
@@ -415,7 +436,6 @@ ${fileContents}` : ''}`;
       // N-stage loop: Continue until text response is returned
       let responseText = "";
       let allToolResults: string[] = [];
-      let currentInput = fullInput;
       let depth = 0;
       const maxDepth = 10;
       let lastResponseId: string | undefined; // Store previous response ID for conversation continuity
@@ -426,7 +446,8 @@ ${fileContents}` : ''}`;
         
         const response = await openai.responses.create({
           model: "o3",
-          input: currentInput,
+          instructions: systemPrompt, // Move system prompt to instructions
+          input: inputItems, // Use structured items instead of string
           tools: tools,
           tool_choice: "auto",
           parallel_tool_calls: true,
@@ -436,7 +457,7 @@ ${fileContents}` : ''}`;
 
         // Check for function calls
         let hasFunctionCalls = false;
-        let currentToolResults: string[] = [];
+        const toolOutputItems: ResponseInputItem[] = []; // Store structured tool outputs
         
         for (const outputItem of response.output || []) {
           if (outputItem.type === 'function_call' && 'name' in outputItem && 'arguments' in outputItem) {
@@ -444,6 +465,7 @@ ${fileContents}` : ''}`;
             const functionCall = outputItem as any;
             const functionName = functionCall.name;
             const argumentsStr = functionCall.arguments;
+            const callId = functionCall.id || `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
             
             try {
               const args = JSON.parse(argumentsStr);
@@ -481,10 +503,28 @@ ${fileContents}` : ''}`;
               }
               
               const resultText = result.content?.map((item: any) => item.text).join('\n') || 'No result';
-              currentToolResults.push(`**${functionName}** result:\n${resultText}`);
+              
+              // Add as structured function_call_output item
+              toolOutputItems.push({
+                type: "function_call_output",
+                call_id: callId,
+                output: resultText
+              } as ResponseInputItem);
+              
+              // Keep for final display
+              allToolResults.push(`**${functionName}** result:\n${resultText}`);
             } catch (error) {
               const errorMsg = error instanceof Error ? error.message : String(error);
-              currentToolResults.push(`**${functionName}** error: ${errorMsg}`);
+              
+              // Add error as function_call_output item
+              toolOutputItems.push({
+                type: "function_call_output",
+                call_id: callId,
+                output: `Error: ${errorMsg}`
+              } as ResponseInputItem);
+              
+              // Keep for final display
+              allToolResults.push(`**${functionName}** error: ${errorMsg}`);
             }
           }
         }
@@ -530,14 +570,10 @@ ${fileContents}` : ''}`;
         // Store response ID for next iteration to maintain conversation context
         lastResponseId = response.id;
 
-        // Add tool results and continue loop
-        allToolResults.push(...currentToolResults);
-        currentInput = `${fullInput}
-
-**Tool Results:**
-${allToolResults.join('\n\n')}
-
-上記の結果を踏まえて、さらにツールが必要なら実行し、十分な情報が揃ったら最終的な分析・回答をしてください。`;
+        // Add tool results to input items for next iteration
+        if (toolOutputItems.length > 0) {
+          inputItems.push(...toolOutputItems);
+        }
       }
 
       // Add tool results to final response
