@@ -352,13 +352,13 @@ Error reading file: ${error instanceof Error ? error.message : "Unknown error"}
           {
             type: "function",
             name: "claude_view",
-            description: "Read a file using Claude Code's Read tool",
+            description: "Read and display the contents of a file. Use this to examine existing files before making modifications.",
             parameters: {
               type: "object",
               properties: {
                 file_path: {
                   type: "string",
-                  description: "Absolute path to the file to read",
+                  description: "Absolute path to the file to read (e.g., '/Users/name/project/file.txt')",
                 },
               },
               required: ["file_path"],
@@ -370,7 +370,7 @@ Error reading file: ${error instanceof Error ? error.message : "Unknown error"}
             type: "function",
             name: "claude_edit",
             description:
-              "Edit a file using Claude Code's Edit tool for string replacement",
+              "Edit an existing file by replacing exact text strings. IMPORTANT: Read the file first with claude_view to see its current contents.",
             parameters: {
               type: "object",
               properties: {
@@ -380,7 +380,7 @@ Error reading file: ${error instanceof Error ? error.message : "Unknown error"}
                 },
                 old_string: {
                   type: "string",
-                  description: "The exact text to find and replace",
+                  description: "The exact text to find and replace (must match exactly, including whitespace)",
                 },
                 new_string: {
                   type: "string",
@@ -395,7 +395,7 @@ Error reading file: ${error instanceof Error ? error.message : "Unknown error"}
           {
             type: "function",
             name: "claude_ls",
-            description: "List directory contents using Claude Code's LS tool",
+            description: "List files and directories in the current working directory. Use this to explore the project structure.",
             parameters: {
               type: "object",
               properties: {},
@@ -408,7 +408,7 @@ Error reading file: ${error instanceof Error ? error.message : "Unknown error"}
             type: "function",
             name: "claude_write",
             description:
-              "Create a new file using Claude Code's Write tool. REQUIRES USER CONFIRMATION.",
+              "Create a new file. SECURITY: Ask user for confirmation first, then call again with confirm='yes'.",
             parameters: {
               type: "object",
               properties: {
@@ -424,7 +424,7 @@ Error reading file: ${error instanceof Error ? error.message : "Unknown error"}
                   type: "string",
                   enum: ["yes"],
                   description:
-                    "MUST be 'yes' to create the file. User confirmation required.",
+                    "MUST be 'yes' to create the file. First ask user for permission, then set this to 'yes'.",
                 },
               },
               required: ["file_path", "content", "confirm"],
@@ -436,19 +436,19 @@ Error reading file: ${error instanceof Error ? error.message : "Unknown error"}
             type: "function",
             name: "claude_bash",
             description:
-              "Execute a command using Claude Code's Bash tool. REQUIRES USER CONFIRMATION for potentially dangerous commands.",
+              "Execute a bash command. SECURITY: Ask user for confirmation first, then call again with confirm='yes'.",
             parameters: {
               type: "object",
               properties: {
                 command: {
                   type: "string",
-                  description: "Command to execute",
+                  description: "Bash command to execute (e.g., 'npm install', 'git status')",
                 },
                 confirm: {
                   type: "string",
                   enum: ["yes"],
                   description:
-                    "MUST be 'yes' to execute the command. User confirmation required.",
+                    "MUST be 'yes' to execute the command. First ask user for permission, then set this to 'yes'.",
                 },
               },
               required: ["command", "confirm"],
@@ -459,13 +459,13 @@ Error reading file: ${error instanceof Error ? error.message : "Unknown error"}
           {
             type: "function",
             name: "claude_grep",
-            description: "Search files using Claude Code's Grep tool",
+            description: "Search for text patterns across files in the project. Uses regular expressions.",
             parameters: {
               type: "object",
               properties: {
                 pattern: {
                   type: "string",
-                  description: "Pattern to search for",
+                  description: "Regular expression pattern to search for (e.g., 'function.*test', 'import.*react')",
                 },
               },
               required: ["pattern"],
@@ -499,7 +499,7 @@ Error reading file: ${error instanceof Error ? error.message : "Unknown error"}
 
           // Check for function calls
           let hasFunctionCalls = false;
-          const toolOutputItems: ResponseInputItem[] = []; // Store structured tool outputs
+          const toolOutputItems: ResponseInputItem[] = []; // Store function_call_output items only (Responses API with previous_response_id)
 
           for (const outputItem of response.output || []) {
             if (
@@ -511,11 +511,18 @@ Error reading file: ${error instanceof Error ? error.message : "Unknown error"}
               const functionCall = outputItem as any;
               const functionName = functionCall.name;
               const argumentsStr = functionCall.arguments;
-              const callId =
-                functionCall.id ||
-                `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+              const callId = functionCall.call_id;
+              if (!callId) {
+                throw new Error("function_call item に call_id がありません");
+              }
+              
+              // Debug: Log function call details
+              process.stderr.write(`[DEBUG] Function call detected: ${functionName}, call_id: ${callId}, args: ${argumentsStr}\n`);
 
               try {
+                if (!argumentsStr) {
+                  throw new Error("function_call arguments が空です");
+                }
                 const args = JSON.parse(argumentsStr);
                 let result: any;
 
@@ -582,12 +589,18 @@ Error reading file: ${error instanceof Error ? error.message : "Unknown error"}
                   result.content?.map((item: any) => item.text).join("\n") ||
                   "No result";
 
-                // Add as structured function_call_output item
+                // Debug: Log function execution result
+                process.stderr.write(`[DEBUG] Function ${functionName} executed successfully, result length: ${resultText.length}\n`);
+
+                // Add function_call_output only (previous_response_id handles function_call history)
                 toolOutputItems.push({
                   type: "function_call_output",
                   call_id: callId,
-                  output: resultText,
+                  output: resultText
                 } as ResponseInputItem);
+                
+                // Debug: Log function_call_output creation
+                process.stderr.write(`[DEBUG] Created function_call_output for call_id: ${callId}\n`);
 
                 // Keep for final display
                 allToolResults.push(
@@ -597,12 +610,18 @@ Error reading file: ${error instanceof Error ? error.message : "Unknown error"}
                 const errorMsg =
                   error instanceof Error ? error.message : String(error);
 
-                // Add error as function_call_output item
+                // Debug: Log function execution error
+                process.stderr.write(`[DEBUG] Function ${functionName} error: ${errorMsg}\n`);
+
+                // Add error function_call_output only (previous_response_id handles function_call history)
                 toolOutputItems.push({
                   type: "function_call_output",
                   call_id: callId,
-                  output: `Error: ${errorMsg}`,
+                  output: `Error: ${errorMsg}`
                 } as ResponseInputItem);
+                
+                // Debug: Log error function_call_output creation
+                process.stderr.write(`[DEBUG] Created error function_call_output for call_id: ${callId}\n`);
 
                 // Keep for final display
                 allToolResults.push(`**${functionName}** error: ${errorMsg}`);
@@ -656,9 +675,15 @@ Error reading file: ${error instanceof Error ? error.message : "Unknown error"}
           // Store response ID for next iteration to maintain conversation context
           lastResponseId = response.id;
 
-          // Add tool results to input items for next iteration
+          // Add function_call_output items to input items for next iteration
           if (toolOutputItems.length > 0) {
+            process.stderr.write(`[DEBUG] Adding ${toolOutputItems.length} function output items to next iteration\n`);
             inputItems.push(...toolOutputItems);
+            
+            // Debug: Log tool output items content
+            for (const item of toolOutputItems) {
+              process.stderr.write(`[DEBUG] Tool output item: type=${item.type}, call_id=${(item as any).call_id || 'N/A'}\n`);
+            }
           }
         }
 
