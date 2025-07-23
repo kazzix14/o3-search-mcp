@@ -5,11 +5,12 @@ import OpenAI from "openai";
 import { z } from "zod";
 import { readFile } from "fs/promises";
 import path from "path";
+import { ConversationStore } from "./conversationStore.js";
 
 // Create server instance
 const server = new McpServer({
   name: "o3-search-mcp",
-  version: "0.0.4",
+  version: "0.0.5",
 });
 
 // Initialize OpenAI client
@@ -21,6 +22,12 @@ if (!process.env.OPENAI_API_KEY) {
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
+
+// Initialize conversation store
+const conversationStore = new ConversationStore();
+
+// Default conversation ID for this server session
+const defaultConversationId = "default_conversation";
 
 // Configuration from environment variables
 const validSearchContextSizes = ["low", "medium", "high"] as const;
@@ -41,15 +48,25 @@ const reasoningEffort = validReasoningEfforts.includes(
 // Define the o3-search tool
 server.tool(
   "ask-gpt-o3-extremely-smart",
-  `An extremely smart reasoning AI with advanced web search capabilities (GPT-o3). Useful for finding latest information and troubleshooting errors, complex problems, typing errors, mathematical problems, and code analysis. 
+  `Advanced reasoning AI powered by OpenAI's o3 model with web search and persistent conversation memory.
 
 Key features:
-- Advanced reasoning with OpenAI's o3 model
-- Web search capabilities for up-to-date information
-- File content analysis - specify file paths to have their contents automatically read and analyzed
-- Perfect for code review, debugging, documentation analysis, and technical problem solving
+- State-of-the-art reasoning with OpenAI's o3 model
+- Real-time web search for up-to-date information
+- Automatic file content analysis (just provide absolute file paths)
+- Persistent conversation memory by default - all conversations continue seamlessly
+- Support for multiple isolated conversations using custom conversation IDs
 
-Usage: Provide your question/problem in 'input' and optionally specify file paths in 'file_paths' for detailed file analysis.`,
+Default behavior:
+- Without conversation_id: Uses a default conversation that persists across all calls
+- With conversation_id: Creates/continues a separate conversation thread
+
+Perfect for:
+- Complex problem solving and debugging
+- Code analysis and review
+- Research with web search
+- Technical documentation analysis
+- Multi-step reasoning tasks that benefit from context retention`,
   {
     input: z
       .string()
@@ -62,8 +79,20 @@ Usage: Provide your question/problem in 'input' and optionally specify file path
       .describe(
         "Optional array of ABSOLUTE file paths to analyze. MUST use absolute paths (starting with / on Unix or C:\\ on Windows). Relative paths are NOT supported. The server will automatically read these files and include their contents in the analysis. Supports any text-based files (code, config, docs, etc.). Example: ['/Users/name/project/file1.ts', '/home/user/code/file2.py', 'C:\\\\projects\\\\config.json']"
       ),
+    conversation_id: z
+      .string()
+      .optional()
+      .describe(
+        "Optional conversation ID to use. If not provided, uses the default conversation that persists across all calls."
+      ),
   },
-  async ({ input, file_paths }) => {
+  async ({ input, file_paths, conversation_id }) => {
+    // Use provided conversation ID or default
+    const convId = conversation_id || defaultConversationId;
+    
+    // Get conversation history if it exists
+    const conversation = conversationStore.getConversation(convId);
+    const conversationContext = !conversation ? "" : conversationStore.getConversationContext(conversation);
     // Read file contents if file_paths are provided
     let fileContents = '';
     if (file_paths && file_paths.length > 0) {
@@ -87,7 +116,17 @@ Error reading file: ${error instanceof Error ? error.message : 'Unknown error'}
       }
     }
 
-    const fullInput = `${input}
+    const systemPrompt = `あなたは他のAIから相談を受けています。相談に対して、できる限り嘘をつかず、正確に答えてください。
+また、情報が足りない場合はその旨を伝え、現状の情報と追加して別の情報を提供するようにしてください。
+例えばソースコードがさらに欲しい場合は、相手のAIにその旨を伝え、今渡されてる情報と合わせてさらに情報を求めてください。
+相手は、情報へのアクセス手段を持っています。
+
+提供されたファイルがある場合は、その内容を詳しく分析し、具体的で実用的な回答を提供してください。
+会話履歴が提供されている場合は、過去のコンテキストを考慮して回答してください。`;
+
+    const fullInput = `${systemPrompt}
+
+${conversationContext}${input}
 
 ${fileContents ? `
 
@@ -97,15 +136,6 @@ The following files have been read and their contents are included below for ana
 ${fileContents}
 
 Please analyze these files in the context of the question/request above.` : ''}`;
-
-    const systemPrompt = `
-    あなたは他のAIから相談を受けています。相談に対して、できる限り嘘をつかず、正確に答えてください。
-    また、情報が足りない場合はその旨を伝え、現状の情報と追加して別の情報を提供するようにしてください。
-    例えばソースコードがさらに欲しい場合は、相手のAIにその旨を伝え、今渡されてる情報と合わせてさらに情報を求めてください。
-    相手は、情報へのアクセス手段を持っています。
-    
-    提供されたファイルがある場合は、その内容を詳しく分析し、具体的で実用的な回答を提供してください。
-    `;
     try {
       const response = await openai.responses.create({
         model: "o3",
@@ -121,11 +151,25 @@ Please analyze these files in the context of the question/request above.` : ''}`
         reasoning: { effort: reasoningEffort },
       });
 
+      const responseText = response.output_text || "No response text available.";
+      
+      // Save conversation
+      conversationStore.createOrUpdateConversation(
+        convId,
+        input,
+        responseText,
+        file_paths
+      );
+      
       return {
         content: [
           {
             type: "text",
-            text: response.output_text || "No response text available.",
+            text: responseText,
+          },
+          {
+            type: "text", 
+            text: `\n\n---\nConversation ID: ${convId}`,
           },
         ],
       };
@@ -142,6 +186,43 @@ Please analyze these files in the context of the question/request above.` : ''}`
         ],
       };
     }
+  }
+);
+
+// Define the reset-conversation tool
+server.tool(
+  "reset-conversation",
+  `Clear conversation history to start fresh. Useful when switching topics or avoiding context confusion.
+
+Use cases:
+- Starting a completely new topic
+- Clearing accumulated context that might cause confusion
+- Resetting after errors or misunderstandings
+- Managing memory usage for long conversations
+
+Default behavior:
+- Without conversation_id: Clears the default conversation (affects all future calls without conversation_id)
+- With conversation_id: Clears only the specified conversation thread`,
+  {
+    conversation_id: z
+      .string()
+      .optional()
+      .describe(
+        "Optional conversation ID to reset. If not provided, resets the default conversation."
+      ),
+  },
+  async ({ conversation_id }) => {
+    const convId = conversation_id || defaultConversationId;
+    conversationStore.resetConversation(convId);
+    
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Conversation "${convId}" has been reset successfully.`,
+        },
+      ],
+    };
   }
 );
 
