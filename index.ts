@@ -412,130 +412,85 @@ ${fileContents}` : ''}`;
         }
       ];
 
-      // Stage 1: Initial API call to get function calls
-      process.stderr.write(`[DEBUG] Stage 1: Making initial API call with tools\n`);
-      const initialResponse = await openai.responses.create({
-        model: "o3",
-        input: fullInput,
-        tools: tools,
-        tool_choice: "auto",
-        parallel_tool_calls: true,
-        reasoning: { effort: reasoningEffort },
-      });
-      
-      process.stderr.write(`[DEBUG] Stage 1 completed\n`);
-      process.stderr.write(`[DEBUG] Initial response keys: ${Object.keys(initialResponse)}\n`);
-
-      // Process function calls from stage 1 if present
-      let functionCallResults: string[] = [];
-      let toolOutputs: any[] = [];
-      
-      for (const outputItem of initialResponse.output || []) {
-        if (outputItem.type === 'function_call' && 'name' in outputItem && 'arguments' in outputItem) {
-          const functionCall = outputItem as any; // ResponseFunctionToolCall
-          const functionName = functionCall.name;
-          const argumentsStr = functionCall.arguments;
-          
-          try {
-            const args = JSON.parse(argumentsStr);
-            let result: any;
-            
-            switch (functionName) {
-              case 'claude_view':
-                result = await viewFile(args.file_path);
-                break;
-              case 'claude_edit':
-                result = await editFile(args.file_path, args.old_string, args.new_string);
-                break;
-              case 'claude_ls':
-                result = await listDirectory('.');
-                break;
-              case 'claude_write':
-                if (args.confirm === 'yes') {
-                  result = await writeFile(args.file_path, args.content);
-                } else {
-                  result = { content: [{ type: "text", text: "Write operation cancelled. User confirmation required." }], isError: true };
-                }
-                break;
-              case 'claude_bash':
-                if (args.confirm === 'yes') {
-                  result = await runBash(args.command);
-                } else {
-                  result = { content: [{ type: "text", text: "Command execution cancelled. User confirmation required." }], isError: true };
-                }
-                break;
-              case 'claude_grep':
-                result = await grepFiles(args.pattern);
-                break;
-              default:
-                result = { content: [{ type: "text", text: `Unknown function: ${functionName}` }], isError: true };
-            }
-            
-            const resultText = result.content?.map((item: any) => item.text).join('\n') || 'No result';
-            functionCallResults.push(`**${functionName}** result:\n${resultText}`);
-            
-            // Prepare tool output for stage 2
-            toolOutputs.push({
-              type: "function_call_output",
-              call_id: functionCall.id || `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-              name: functionName,
-              content: resultText
-            });
-          } catch (error) {
-            const errorMsg = error instanceof Error ? error.message : String(error);
-            functionCallResults.push(`**${functionName}** error: ${errorMsg}`);
-            
-            // Add error to tool outputs too
-            toolOutputs.push({
-              type: "function_call_output", 
-              call_id: functionCall.id || `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-              name: functionName,
-              content: `Error: ${errorMsg}`
-            });
-          }
-        }
-      }
-
+      // N-stage loop: Continue until text response is returned
       let responseText = "";
+      let allToolResults: string[] = [];
+      let currentInput = fullInput;
+      let depth = 0;
+      const maxDepth = 10;
 
-      // Debug: Check if we have function calls for stage 2
-      process.stderr.write(`[DEBUG] Function call results count: ${functionCallResults.length}\n`);
-      process.stderr.write(`[DEBUG] Tool outputs count: ${toolOutputs.length}\n`);
-      
-      // If we have function calls, do stage 2 for analysis
-      if (toolOutputs.length > 0) {
-        process.stderr.write(`[DEBUG] Stage 2: Making follow-up call with tool results\n`);
+      while (depth < maxDepth) {
+        depth++;
+        process.stderr.write(`[DEBUG] Stage ${depth}: Making API call\n`);
         
-        // Stage 2: Call with tool results for analysis
-        const stage2Input = `${fullInput}
-
-**Tool Results:**
-${functionCallResults.join('\n\n')}
-
-上記の結果を踏まえて、簡潔に分析・回答してください。`;
-
-        // Stage 2 tools: only web search for analysis phase
-        const stage2Tools: any[] = [{
-          type: "web_search_preview",
-          search_context_size: searchContextSize,
-        }];
-
-        const analysisResponse = await openai.responses.create({
+        const response = await openai.responses.create({
           model: "o3",
-          input: stage2Input,
-          tools: stage2Tools,
+          input: currentInput,
+          tools: tools,
           tool_choice: "auto",
+          parallel_tool_calls: true,
           reasoning: { effort: reasoningEffort },
         });
+
+        // Check for function calls
+        let hasFunctionCalls = false;
+        let currentToolResults: string[] = [];
         
-        process.stderr.write(`[DEBUG] Stage 2 completed\n`);
-        process.stderr.write(`[DEBUG] Stage 2 response keys: ${Object.keys(analysisResponse)}\n`);
-        process.stderr.write(`[DEBUG] Stage 2 output length: ${analysisResponse.output?.length || 0}\n`);
-        
-        // Extract text from analysis response
-        if (analysisResponse.output) {
-          const messageItems = analysisResponse.output.filter((item: any) => item.type === 'message');
-          process.stderr.write(`[DEBUG] Stage 2 message items found: ${messageItems.length}\n`);
+        for (const outputItem of response.output || []) {
+          if (outputItem.type === 'function_call' && 'name' in outputItem && 'arguments' in outputItem) {
+            hasFunctionCalls = true;
+            const functionCall = outputItem as any;
+            const functionName = functionCall.name;
+            const argumentsStr = functionCall.arguments;
+            
+            try {
+              const args = JSON.parse(argumentsStr);
+              let result: any;
+              
+              switch (functionName) {
+                case 'claude_view':
+                  result = await viewFile(args.file_path);
+                  break;
+                case 'claude_edit':
+                  result = await editFile(args.file_path, args.old_string, args.new_string);
+                  break;
+                case 'claude_ls':
+                  result = await listDirectory('.');
+                  break;
+                case 'claude_write':
+                  if (args.confirm === 'yes') {
+                    result = await writeFile(args.file_path, args.content);
+                  } else {
+                    result = { content: [{ type: "text", text: "Write operation cancelled. User confirmation required." }], isError: true };
+                  }
+                  break;
+                case 'claude_bash':
+                  if (args.confirm === 'yes') {
+                    result = await runBash(args.command);
+                  } else {
+                    result = { content: [{ type: "text", text: "Command execution cancelled. User confirmation required." }], isError: true };
+                  }
+                  break;
+                case 'claude_grep':
+                  result = await grepFiles(args.pattern);
+                  break;
+                default:
+                  result = { content: [{ type: "text", text: `Unknown function: ${functionName}` }], isError: true };
+              }
+              
+              const resultText = result.content?.map((item: any) => item.text).join('\n') || 'No result';
+              currentToolResults.push(`**${functionName}** result:\n${resultText}`);
+            } catch (error) {
+              const errorMsg = error instanceof Error ? error.message : String(error);
+              currentToolResults.push(`**${functionName}** error: ${errorMsg}`);
+            }
+          }
+        }
+
+        // Extract text response first
+        let currentResponseText = "";
+        if (response.output) {
+          const messageItems = response.output.filter((item: any) => item.type === 'message');
           const textContents: string[] = [];
           
           for (const messageItem of messageItems) {
@@ -549,44 +504,40 @@ ${functionCallResults.join('\n\n')}
             }
           }
           
-          process.stderr.write(`[DEBUG] Stage 2 text contents found: ${textContents.length}\n`);
           if (textContents.length > 0) {
-            responseText = textContents.join('\n');
+            currentResponseText = textContents.join('\n');
           }
         }
-        
-        if (!responseText) {
-          responseText = "分析が完了しましたが、テキストレスポンスが返されませんでした。";
+
+        // Complete if no function calls AND meaningful text output exists
+        if (!hasFunctionCalls && currentResponseText.trim().length > 0) {
+          responseText = currentResponseText;
+          break;
         }
         
-        // Append function call results for context
-        responseText += "\n\n---\n**Tools Used:**\n" + functionCallResults.join('\n\n');
-        
-      } else {
-        // No function calls, extract text from initial response
-        if (initialResponse.output) {
-          const messageItems = initialResponse.output.filter((item: any) => item.type === 'message');
-          const textContents: string[] = [];
-          
-          for (const messageItem of messageItems) {
-            const msgItem = messageItem as any;
-            if (msgItem.content && Array.isArray(msgItem.content)) {
-              for (const contentItem of msgItem.content) {
-                if (contentItem.type === 'output_text' && contentItem.text) {
-                  textContents.push(contentItem.text);
-                }
-              }
-            }
-          }
-          
-          if (textContents.length > 0) {
-            responseText = textContents.join('\n');
+        // If no function calls but no meaningful text, continue (this shouldn't happen normally)
+        if (!hasFunctionCalls && !currentResponseText.trim()) {
+          process.stderr.write(`[DEBUG] Stage ${depth}: No function calls but no text output, continuing...\n`);
+          // Continue to next iteration, but set a fallback message in case we hit max depth
+          if (depth >= maxDepth - 1) {
+            responseText = "ツールの実行は完了しましたが、最終的な回答を取得できませんでした。";
+            break;
           }
         }
-        
-        if (!responseText) {
-          responseText = "レスポンスが取得できませんでした。";
-        }
+
+        // Add tool results and continue loop
+        allToolResults.push(...currentToolResults);
+        currentInput = `${fullInput}
+
+**Tool Results:**
+${allToolResults.join('\n\n')}
+
+上記の結果を踏まえて、さらにツールが必要なら実行し、十分な情報が揃ったら最終的な分析・回答をしてください。`;
+      }
+
+      // Add tool results to final response
+      if (allToolResults.length > 0) {
+        responseText += "\n\n---\n**Tools Used:**\n" + allToolResults.join('\n\n');
       }
       
       // Save conversation
