@@ -19,7 +19,10 @@ export async function createClaudeClient(): Promise<ClaudeClientWrapper> {
     
     
     // 2) PATH に node_modules/.bin を追加 (Claude MCP サーバー内部のspawn用)
-    const binDir = path.resolve(process.cwd(), 'node_modules', '.bin');
+    // Use dirname of claudeCliPath to find the correct node_modules
+    const claudeDir = path.dirname(claudeCliPath);
+    const nodeModulesDir = path.resolve(claudeDir, '..', '..');
+    const binDir = path.join(nodeModulesDir, '.bin');
     const delimiter = process.platform === 'win32' ? ';' : ':';
     const extendedPath = `${binDir}${delimiter}${process.env.PATH || ''}`;
     
