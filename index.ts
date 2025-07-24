@@ -305,8 +305,8 @@ Error reading file: ${error instanceof Error ? error.message : "Unknown error"}
             : ""
         }`;
 
-        // Prepare structured input items instead of string concatenation
-        const inputItems: ResponseInputItem[] = [
+        // Prepare initial input items for first call only
+        const initialInputItems: ResponseInputItem[] = [
           {
             type: "message",
             role: "user",
@@ -318,7 +318,7 @@ Error reading file: ${error instanceof Error ? error.message : "Unknown error"}
 
         // Add diff analysis as a system message if present
         if (diffAnalysis) {
-          inputItems.push({
+          initialInputItems.push({
             type: "message",
             role: "system",
             content: [{ type: "input_text", text: diffAnalysis }],
@@ -327,7 +327,7 @@ Error reading file: ${error instanceof Error ? error.message : "Unknown error"}
 
         // Add file contents as a system message if present
         if (fileContents) {
-          inputItems.push({
+          initialInputItems.push({
             type: "message",
             role: "system",
             content: [
@@ -338,9 +338,6 @@ Error reading file: ${error instanceof Error ? error.message : "Unknown error"}
 
         process.stderr.write(
           `[DEBUG] About to call OpenAI API with model: o3\n`
-        );
-        process.stderr.write(
-          `[DEBUG] Input items count: ${inputItems.length}\n`
         );
 
         // Define tools for o3 - separate web search and function tools for better type safety
@@ -481,15 +478,25 @@ Error reading file: ${error instanceof Error ? error.message : "Unknown error"}
         let depth = 0;
         const maxDepth = 30; // Maximum iterations for complex tasks
         let lastResponseId: string | undefined; // Store previous response ID for conversation continuity
+        let previousToolOutputItems: ResponseInputItem[] = []; // Store tool outputs from previous iteration
 
         while (depth < maxDepth) {
           depth++;
           process.stderr.write(`[DEBUG] Stage ${depth}: Making API call\n`);
 
+          // Determine input items based on iteration
+          // First iteration: send initial user/system messages
+          // Subsequent iterations: only send previous tool outputs (previous_response_id handles context)
+          const inputItems = depth === 1 ? initialInputItems : previousToolOutputItems;
+          
+          process.stderr.write(
+            `[DEBUG] Input items count: ${inputItems.length}\n`
+          );
+
           const response = await openai.responses.create({
             model: "o3",
             instructions: systemPrompt, // Move system prompt to instructions
-            input: inputItems, // Use structured items instead of string
+            input: inputItems, // Use appropriate items for each iteration
             tools: tools,
             tool_choice: "auto",
             parallel_tool_calls: true,
@@ -675,10 +682,11 @@ Error reading file: ${error instanceof Error ? error.message : "Unknown error"}
           // Store response ID for next iteration to maintain conversation context
           lastResponseId = response.id;
 
-          // Add function_call_output items to input items for next iteration
+          // Store tool outputs for next iteration (don't accumulate, just replace)
+          previousToolOutputItems = toolOutputItems;
+          
           if (toolOutputItems.length > 0) {
-            process.stderr.write(`[DEBUG] Adding ${toolOutputItems.length} function output items to next iteration\n`);
-            inputItems.push(...toolOutputItems);
+            process.stderr.write(`[DEBUG] Storing ${toolOutputItems.length} function output items for next iteration\n`);
             
             // Debug: Log tool output items content
             for (const item of toolOutputItems) {
